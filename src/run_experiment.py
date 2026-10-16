@@ -22,7 +22,10 @@ Run the full comparison suite in one go and save results/comparison.json:
 """
 
 import argparse
+import importlib.util
 import json
+import platform
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +53,24 @@ from trust_strategy import TrustWeightedFedAvg
 
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
+
+
+def _require_ray():
+    """Fail early, with the real cause, if Ray (Flower's simulation engine) is missing.
+
+    Flower's ``simulation`` extra only installs Ray on Python 3.11-3.12 (and on
+    3.13+ outside Windows), so ``pip install "flwr[simulation]"`` can succeed on
+    Windows + Python 3.13/3.14 without Ray and Flower then fails with exit code 701.
+    """
+    if importlib.util.find_spec("ray") is None:
+        raise SystemExit(
+            f"Ray is not installed for this Python ({platform.python_version()} on {sys.platform}), "
+            "so Flower simulations cannot run.\n"
+            "Use Python 3.12 (the tested version): create a fresh environment with it "
+            "(Windows: `py -3.12 -m venv .venv`), activate it, then "
+            "`pip install -r requirements.txt`.\n"
+            "See docs/PROJECT_GUIDE.md -> Troubleshooting (Exit Code 701)."
+        )
 
 
 def build_node_partitions(train_df, n_nodes, partition_type, poison_node_idx, poison_fraction, seed=RANDOM_STATE):
@@ -181,6 +202,7 @@ def run_once(strategy_name, partition_type, n_nodes, n_rounds, local_epochs,
     :returns: Result dict, or ``(result, strategy, scaler)`` if
         *return_strategy* is ``True``.
     """
+    _require_ray()
     if boost_factor < 0:
         raise ValueError("boost_factor must be non-negative.")
 

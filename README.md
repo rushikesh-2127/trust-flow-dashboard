@@ -118,7 +118,7 @@ aggregate instead of 25 %. Full details: [docs/METHODOLOGY.md](docs/METHODOLOGY.
 
 ## Quick start
 
-Requires Python 3.12 (tested on Windows 11). Installing Flower with its simulation extra pulls in
+Requires **Python 3.12** (tested on Windows 11; Python 3.13/3.14 on Windows cannot run the simulation, see below). Installing Flower with its simulation extra pulls in
 Ray, so the first install takes several minutes.
 
 ```powershell
@@ -147,7 +147,8 @@ macOS / Linux: the same commands work; activate with `source .venv/bin/activate`
 > make sure the environment is **activated** before running anything. Seeing
 > `Exit Code: 701 … Extra dependencies required for simulation are missing` means Ray is not
 > installed in the Python you used — activate the venv and run `pip install -r requirements.txt`.
-> Python 3.12 is recommended. Flower prints two harmless warnings (`run_simulation is deprecated`,
+> **Use Python 3.12** — on Windows, Flower's simulation extra does not install Ray for Python 3.13/3.14
+> (check with `python --version`; install 3.12 and create the venv with `py -3.12 -m venv .venv`). Flower prints two harmless warnings (`run_simulation is deprecated`,
 > `Ray support on Windows is experimental`); on Windows, WSL2 is Flower's preferred setup.
 
 The repository already contains generated results (`results/`) and the synthetic dataset
