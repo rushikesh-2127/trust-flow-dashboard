@@ -38,15 +38,12 @@ def load_dataset(path: Path = RAW_DATA_PATH) -> DataFrame:
     """
     if not path.exists():
         if path == RAW_DATA_PATH:
-            try:
+            gen_script = ROOT / "data" / "generate_synthetic_data.py"
+            if gen_script.exists():
                 import sys
-                gen_script = ROOT / "data" / "generate_synthetic_data.py"
-                if gen_script.exists():
-                    sys.path.insert(0, str(ROOT / "data"))
-                    import generate_synthetic_data
-                    generate_synthetic_data.generate()
-            except Exception:
-                pass
+                sys.path.insert(0, str(ROOT / "data"))
+                import generate_synthetic_data
+                generate_synthetic_data.generate()
         if not path.exists():
             raise FileNotFoundError(
                 f"{path} not found. Run `python data/generate_synthetic_data.py` first "
@@ -148,13 +145,13 @@ def partition_non_iid(df: DataFrame, n_nodes: int, primary_share=0.7, random_sta
         primary_df = df[df["attack_type"].isin(primary_types)]
         # Sample primary_share of this node's "primary" attack rows,
         # plus a small amount of everything else to avoid zero-shot classes.
-        n_primary = int(len(primary_df) * primary_share / max(n_nodes, 1) * n_nodes)
+        n_primary = int(len(primary_df) * primary_share)
         primary_sample = primary_df.sample(
-            n=min(n_primary, len(primary_df)), random_state=random_state
+            n=min(n_primary, len(primary_df)), random_state=random_state + i
         )
         other_df = df[~df["attack_type"].isin(primary_types) & (df["attack_type"] != "normal")]
         other_sample = other_df.sample(
-            frac=(1 - primary_share) * 0.3, random_state=random_state
+            frac=(1 - primary_share) * 0.3, random_state=random_state + 1000 + i
         )
         node_df = pd.concat([primary_sample, other_sample, normal_chunks[i]])
         node_df = node_df.sample(frac=1.0, random_state=random_state).reset_index(drop=True)

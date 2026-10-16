@@ -7,7 +7,6 @@ only the updated weights (never raw traffic data) to the server.
 """
 
 import numpy as np
-import pandas as pd
 from pandas import DataFrame
 import flwr as fl
 from sklearn.metrics import accuracy_score, f1_score, log_loss

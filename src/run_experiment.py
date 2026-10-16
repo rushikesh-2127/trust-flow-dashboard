@@ -107,7 +107,13 @@ def make_client_fn(node_dfs, scaler, poison_node_idx=None, boost_factor=1.0):
 
         :param context: Flower simulation context supplying ``node_id``.
         """
-        pid = int(context.node_id) % len(node_dfs)
+        # run_simulation populates node_config["partition-id"] (0..num_supernodes-1)
+        # when launched with num_supernodes. Fall back to node_id only if absent.
+        cfg = getattr(context, "node_config", None) or {}
+        if "partition-id" in cfg:
+            pid = int(cfg["partition-id"]) % len(node_dfs)
+        else:
+            pid = int(context.node_id) % len(node_dfs)
         node_df = node_dfs[pid]
         boost = boost_factor if (poison_node_idx is not None and pid == poison_node_idx) else 1.0
         return NodeClient(
@@ -264,6 +270,11 @@ def run_once(strategy_name, partition_type, n_nodes, n_rounds, local_epochs,
     )
 
     final = {k: v[-1] for k, v in rounds_metrics.items() if v}
+    if not final:
+        raise RuntimeError(
+            "Simulation finished without any evaluation metrics -- the Flower/Ray run "
+            "most likely failed. Check the log above for the underlying error."
+        )
     result = {
         "strategy": strategy_name,
         "partition": partition_type,

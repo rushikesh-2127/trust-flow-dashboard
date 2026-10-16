@@ -20,10 +20,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))  # noqa: E402
-import pandas as pd
 # pyrefly: ignore [missing-import]
 from common import (
-    load_dataset, get_global_test_split,
+    get_global_test_split,
     partition_iid, partition_non_iid,
     LABEL_COLUMN, RANDOM_STATE,
 )

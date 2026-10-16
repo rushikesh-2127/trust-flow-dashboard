@@ -10,5 +10,5 @@ font = "sans serif"
 gatherUsageStats = false
 
 [server]
-enableStaticServing = true
+enableStaticServing = false
 

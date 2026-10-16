@@ -31,3 +31,6 @@ results/*.joblib
 # IDE
 .vscode/
 .idea/
+
+# Local user database (auto-created by the dashboard on first run)
+dashboard/users.json

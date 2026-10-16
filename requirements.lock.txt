@@ -1,0 +1,12 @@
+﻿bcrypt==5.0.0
+flwr==1.40.0
+joblib==1.6.0
+matplotlib==3.11.2
+numpy==2.5.4
+pandas==3.0.6
+plotly==7.1.0
+pytest==9.1.1
+ray==2.55.1
+scikit-learn==1.9.1
+scipy==1.18.1
+streamlit==1.66.0

@@ -7,7 +7,7 @@ Byzantine-Resilient Federated Learning Dashboard
 
 import base64
 import datetime
-import hashlib
+import html
 import json
 import re
 import sys
@@ -18,13 +18,16 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from auth import MAX_PASSWORD_BYTES, hash_password, load_users, save_users, verify_password  # noqa: E402
+from data_audit import normalize_and_align_features, trace_file_bugs_and_anomalies  # noqa: E402
+from scoring import score_device  # noqa: E402
 RESULTS_DIR = ROOT / "results"
 DATA_DIR = ROOT / "data"
-USERS_FILE = Path(__file__).resolve().parent / "users.json"
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 SHIELD_IMG = ASSETS_DIR / "soc_shield.jpg"
 MESH_IMG = ASSETS_DIR / "threat_mesh.jpg"
@@ -42,51 +45,6 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # USER DATABASE & PERSISTENCE (Sign Up / Sign In)
 # ---------------------------------------------------------------------------
-def hash_password(password: str) -> str:
-    """Hash a plaintext password with SHA-256 and a dedicated salt.
-
-    :param password: Raw password string to hash.
-    :returns: Hexadecimal SHA-256 digest string.
-    """
-    salt = "trustfl_secure_salt_2026"
-    return hashlib.sha256(f"{salt}_{password}".encode("utf-8")).hexdigest()
-
-
-def load_users() -> dict:
-    """Load user credentials from the JSON persistence file.
-
-    Initializes the user database with default demo credentials if the file
-    does not exist.
-
-    :returns: Dictionary mapping user email to profile information and password hash.
-    """
-    if not USERS_FILE.exists():
-        default_users = {
-            "demo@trustfl.org": {
-                "password_hash": hash_password("TrustFL@2026"),
-                "name": "Demo User",
-                "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-            }
-        }
-        with open(USERS_FILE, "w") as f:
-            json.dump(default_users, f, indent=2)
-        return default_users
-    try:
-        with open(USERS_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_users(users: dict):
-    """Persist user account records to the JSON user database.
-
-    :param users: Dictionary mapping user email to profile details and credentials.
-    """
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=2)
-
-
 # ---------------------------------------------------------------------------
 # DESIGN SYSTEM: PLUS JAKARTA SANS & MODERN MINIMALIST SAAS
 # ---------------------------------------------------------------------------
@@ -174,7 +132,7 @@ html, body {{
     color: #DFE2F1 !important;
     min-height: 100vh !important;
     background-image:
-        linear-gradient(rgba(6, 8, 14, 0.22) 0%, rgba(6, 8, 14, 0.38) 100%),
+        linear-gradient(rgba(6, 8, 14, 0.78) 0%, rgba(6, 8, 14, 0.90) 100%),
         {_bg_img_layer} !important;
     background-size: cover !important;
     background-position: center top !important;
@@ -191,7 +149,7 @@ html, body {{
     min-height: 100vh !important;
     background-color: transparent !important;
     background-image:
-        linear-gradient(rgba(6, 8, 14, 0.22) 0%, rgba(6, 8, 14, 0.38) 100%),
+        linear-gradient(rgba(6, 8, 14, 0.78) 0%, rgba(6, 8, 14, 0.90) 100%),
         {_bg_img_layer} !important;
     background-size: cover !important;
     background-position: center top !important;
@@ -627,6 +585,57 @@ body::after {{
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
+# Readability layer: frosted content panel + solid tab bar so text never
+# competes with the background photo.
+st.markdown("""
+<style>
+[data-testid="stMainBlockContainer"] {
+    max-width: 1280px !important;
+    margin: 0.6rem auto 1.5rem auto !important;
+    padding: 1.4rem 2rem 2rem 2rem !important;
+    background: rgba(10, 14, 22, 0.80) !important;
+    backdrop-filter: blur(18px) saturate(1.2);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    border: 1px solid rgba(60, 73, 76, 0.45);
+    border-radius: 18px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+}
+[data-baseweb="tab-list"] {
+    background: rgba(23, 27, 38, 0.95) !important;
+    border: 1px solid rgba(60, 73, 76, 0.5);
+    border-radius: 12px;
+    padding: 0.3rem !important;
+    gap: 0.25rem !important;
+}
+[data-baseweb="tab"] {
+    border-radius: 8px !important;
+    padding: 0.45rem 1rem !important;
+    color: #BBC9CD !important;
+}
+[data-baseweb="tab"][aria-selected="true"] {
+    background: rgba(34, 211, 238, 0.14) !important;
+    color: #22D3EE !important;
+}
+[data-baseweb="tab-highlight"], [data-baseweb="tab-border"] { display: none !important; }
+[data-testid="stMetric"] {
+    background: #1C1F2A;
+    border: 1px solid rgba(60, 73, 76, 0.5);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+}
+.tf-statrow { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0.4rem 0 0.9rem 0; }
+.tf-stat {
+    flex: 1 1 140px; background: #1C1F2A; border: 1px solid rgba(60,73,76,0.5);
+    border-radius: 12px; padding: 0.7rem 0.9rem;
+}
+.tf-stat .k { font-size: 0.68rem; color: #859397; text-transform: uppercase; letter-spacing: 0.06em; }
+.tf-stat .v { font-family: 'JetBrains Mono', monospace; font-size: 1.35rem; font-weight: 700; color: #DFE2F1; }
+@media (max-width: 900px) {
+    [data-testid="stMainBlockContainer"] { padding: 1rem !important; border-radius: 0; margin: 0 !important; }
+}
+</style>
+""", unsafe_allow_html=True)
+
 if _bg_img_b64:
     st.markdown(f"""
 <div id="tf-command-bg" style="
@@ -635,102 +644,12 @@ if _bg_img_b64:
     width: 100vw; height: 100vh;
     z-index: -1;
     pointer-events: none;
-    background-image: linear-gradient(rgba(6, 8, 14, 0.20) 0%, rgba(6, 8, 14, 0.35) 100%), url('data:image/jpeg;base64,{_bg_img_b64}');
+    background-image: linear-gradient(rgba(6, 8, 14, 0.78) 0%, rgba(6, 8, 14, 0.90) 100%), url('data:image/jpeg;base64,{_bg_img_b64}');
     background-size: cover;
     background-position: center top;
     background-repeat: no-repeat;
     background-attachment: fixed;
 "></div>
-""", unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------------
-# PARTICLE NETWORK CANVAS — animated node/edge background (JS)
-# ---------------------------------------------------------------------------
-st.markdown("""
-<canvas id="tf-particles" style="
-    position: fixed; top: 0; left: 0;
-    width: 100%; height: 100%;
-    z-index: 0; pointer-events: none;
-    opacity: 0.30;
-"></canvas>
-<script>
-(function(){{
-  const c = document.getElementById('tf-particles');
-  if (!c) return;
-  const ctx = c.getContext('2d');
-  let W, H, nodes = [];
-
-  function resize() {{
-    W = c.width  = window.innerWidth;
-    H = c.height = window.innerHeight;
-  }}
-  window.addEventListener('resize', resize);
-  resize();
-
-  // Create nodes
-  for (let i = 0; i < 55; i++) {{
-    nodes.push({{
-      x: Math.random() * W,
-      y: Math.random() * H,
-      vx: (Math.random() - 0.5) * 0.45,
-      vy: (Math.random() - 0.5) * 0.45,
-      r: Math.random() * 2.2 + 1.0,
-      pulse: Math.random() * Math.PI * 2
-    }});
-  }}
-
-  function draw() {{
-    ctx.clearRect(0, 0, W, H);
-    const t = Date.now() / 1000;
-
-    // Edges
-    for (let i = 0; i < nodes.length; i++) {{
-      for (let j = i + 1; j < nodes.length; j++) {{
-        const dx = nodes[i].x - nodes[j].x;
-        const dy = nodes[i].y - nodes[j].y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 160) {{
-          const alpha = (1 - dist / 160) * 0.35;
-          ctx.beginPath();
-          ctx.moveTo(nodes[i].x, nodes[i].y);
-          ctx.lineTo(nodes[j].x, nodes[j].y);
-          ctx.strokeStyle = `rgba(0,200,255,${{alpha.toFixed(3)}})`;
-          ctx.lineWidth = 0.8;
-          ctx.stroke();
-        }}
-      }}
-    }}
-
-    // Nodes
-    nodes.forEach(n => {{
-      const glow = 0.5 + 0.5 * Math.sin(t * 1.5 + n.pulse);
-      const r = n.r + glow * 1.2;
-      const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, r * 4);
-      grad.addColorStop(0,   `rgba(34,211,238,${{(0.85*glow).toFixed(2)}})`  );
-      grad.addColorStop(0.5, `rgba(0,200,255,${{ (0.25*glow).toFixed(2)}})`  );
-      grad.addColorStop(1,   'rgba(0,0,0,0)');
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r * 4, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(150,255,255,${{(0.9*glow).toFixed(2)}})`;
-      ctx.fill();
-    }});
-
-    // Move nodes
-    nodes.forEach(n => {{
-      n.x += n.vx; n.y += n.vy;
-      if (n.x < 0 || n.x > W) n.vx *= -1;
-      if (n.y < 0 || n.y > H) n.vy *= -1;
-    }});
-
-    requestAnimationFrame(draw);
-  }}
-  draw();
-}})();
-</script>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
@@ -816,7 +735,7 @@ Sign in to access the Security Console
                         st.error("Please enter both email and password.")
                     elif email not in users_db:
                         st.error("No account found with this email address.")
-                    elif users_db[email]["password_hash"] != hash_password(password):
+                    elif not verify_password(password, users_db[email]["password_hash"]):
                         st.error("Incorrect password. Please try again.")
                     else:
                         st.session_state.auth_user = {
@@ -849,6 +768,8 @@ Sign in to access the Security Console
                         st.error("An account with this email already exists. Please Sign In.")
                     elif len(new_password) < 6:
                         st.error("Password must be at least 6 characters long.")
+                    elif len(new_password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+                        st.error(f"Password must be at most {MAX_PASSWORD_BYTES} bytes.")
                     elif new_password != confirm_password:
                         st.error("Passwords do not match.")
                     else:
@@ -877,107 +798,16 @@ if not st.session_state.auth_user:
 # ---------------------------------------------------------------------------
 user = st.session_state.auth_user or {"name": "Guest", "email": "guest@trustfl.org"}
 
-# Hero banner — shown above navbar on dashboard
-st.markdown(f"""<div style="padding:1.6rem 2rem 1.4rem 2rem; background:linear-gradient(135deg,rgba(12,16,26,0.92) 0%,rgba(18,24,38,0.92) 100%); border:1px solid rgba(34,211,238,0.22); border-radius:16px; margin-bottom:0.85rem; position:relative; overflow:hidden; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(14px);">
-<div style="position:absolute; inset:0; pointer-events:none; background-image:linear-gradient(rgba(34,211,238,0.035) 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,0.035) 1px,transparent 1px); background-size:28px 28px; border-radius:16px;"></div>
-<div style="position:absolute; top:0; left:15%; right:15%; height:2px; background:linear-gradient(90deg,transparent,#22D3EE,transparent); border-radius:9999px;"></div>
-<div style="position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%;">
-<div style="font-family:'JetBrains Mono',monospace; font-size:0.70rem; font-weight:600; color:#22D3EE; letter-spacing:0.18em; text-transform:uppercase; margin-bottom:0.6rem; opacity:0.95; display:flex; align-items:center; justify-content:center; gap:0.8rem; width:100%;">
-<span style="flex:1; max-width:140px; height:1px; background:linear-gradient(90deg,transparent,rgba(34,211,238,0.5));"></span>
-🛡️ &nbsp;TRUST NO ONE &bull; VERIFY EVERYTHING &bull; DEFEND EVERYWHERE
-<span style="flex:1; max-width:140px; height:1px; background:linear-gradient(90deg,rgba(34,211,238,0.5),transparent);"></span>
-</div>
-<div style="display:flex; align-items:center; justify-content:center; gap:1rem; margin-bottom:0.35rem;">
-<div style="width:46px; height:46px; display:flex; align-items:center; justify-content:center; background:rgba(34,211,238,0.08); border:1px solid rgba(34,211,238,0.35); border-radius:12px; box-shadow:0 0 20px rgba(34,211,238,0.25);">
-<svg width="32" height="32" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter:drop-shadow(0 0 8px rgba(34,211,238,0.7));">
-<path d="M50 8 L86 24 V52 C86 73 50 93 50 93 C50 93 14 73 14 52 V24 L50 8 Z" stroke="#22D3EE" stroke-width="4.5" fill="rgba(15,23,42,0.85)"/>
-<path d="M50 20 L76 32 V50 C76 64 50 78 50 78 C50 78 24 64 24 50 V32 L50 20 Z" stroke="rgba(34,211,238,0.6)" stroke-width="2.5" fill="rgba(34,211,238,0.12)"/>
-<circle cx="50" cy="48" r="8" fill="#68F5B8" style="filter:drop-shadow(0 0 6px #68F5B8);"/>
-<line x1="50" y1="28" x2="50" y2="40" stroke="#22D3EE" stroke-width="2.5" stroke-dasharray="2 2"/>
-<line x1="36" y1="56" x2="44" y2="52" stroke="#22D3EE" stroke-width="2.5"/>
-<line x1="64" y1="56" x2="56" y2="52" stroke="#22D3EE" stroke-width="2.5"/>
-<circle cx="50" cy="28" r="3.5" fill="#22D3EE"/>
-<circle cx="34" cy="58" r="3.5" fill="#22D3EE"/>
-<circle cx="66" cy="58" r="3.5" fill="#22D3EE"/>
-</svg>
-</div>
-<div style="font-family:'Plus Jakarta Sans',sans-serif; font-size:2.8rem; font-weight:800; letter-spacing:-0.04em; color:#FFFFFF; line-height:1;">
-Trust<span style="color:#22D3EE; text-shadow:0 0 32px rgba(34,211,238,0.85);">FL</span>
-<span style="font-size:0.95rem; font-weight:600; color:{COLOR_MUTED}; letter-spacing:0.04em; margin-left:0.75rem; vertical-align:middle; font-family:'JetBrains Mono',monospace;">// SECURITY CONSOLE</span>
-</div>
-</div>
-<div style="font-size:0.90rem; color:#94A3B8; font-style:italic; letter-spacing:0.01em; margin-top:0.2rem;">
-&ldquo;Where every gradient is earned, not assumed &mdash; federated trust at the edge.&rdquo;
-</div>
-</div>
-</div>
-
-<div class="tf-navbar" style="margin-bottom: 1.2rem;">
-<div style="display: flex; align-items: center; gap: 0.8rem;">
-<span class="tf-badge" style="background: rgba(34,211,238,0.10); color: #8aebff; border: 1px solid rgba(34,211,238,0.22); font-family: 'JetBrains Mono', monospace; font-size: 0.68rem;">
-SPEC: ENCLAVE-DEFENSE-V4.2
-</span>
-<span class="tf-badge badge-trust"><span class="tf-badge-dot"></span> Active</span>
-</div>
-<div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
-<span class="tf-badge badge-trust"><span class="tf-badge-dot"></span> 4 Nodes</span>
-<span class="tf-badge" style="background: rgba(34,211,238,0.12); color: #8aebff; border: 1px solid rgba(34,211,238,0.25);">Trust Floor: 0.05</span>
-<span class="tf-badge" style="background: rgba(104,245,184,0.10); color: #68f5b8; border: 1px solid rgba(104,245,184,0.22);">Consensus: Cosine EMA</span>
-<div style="display: flex; align-items: center; gap: 0.5rem; background: #1c1f2a; padding: 0.25rem 0.75rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
-<div style="font-size: 0.82rem; color: #dfe2f1; font-weight: 600;">{user['name']}</div>
-<span style="font-size: 0.65rem; color: #22d3ee; background: rgba(34,211,238,0.12); padding: 0.1rem 0.4rem; border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-weight: 700;">CLEARANCE ALPHA</span>
-</div>
-</div>
-</div>""", unsafe_allow_html=True)
-
-with st.sidebar:
-    if SHIELD_IMG.exists():
-        st.image(str(SHIELD_IMG), use_container_width=True)
-    st.markdown(f"""
-    <div style="padding: 0.5rem 0 1rem 0; border-bottom: 1px solid {COLOR_BORDER}; margin-bottom: 1rem;">
-        <div style="font-size: 0.76rem; color: {COLOR_MUTED}; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Logged In As</div>
-        <div style="font-size: 1.05rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">{user['name']}</div>
-        <div style="font-size: 0.8rem; color: {COLOR_MUTED};">{user['email']}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div style="font-size: 0.8rem; color: {COLOR_MUTED}; line-height: 1.8; margin-bottom: 1rem;">
-        <div><b>Consensus:</b> Cosine EMA</div>
-        <div><b>Trust Floor:</b> 0.05</div>
-        <div><b>Defense Status:</b> <span style="color: {COLOR_SUCCESS};">Active</span></div>
-    </div>
-    <div style="padding: 0.8rem; border-radius: 10px; background: rgba(23, 27, 38, 0.75); border: 1px solid rgba(255,255,255,0.07); font-family: 'JetBrains Mono', monospace; margin-bottom: 1.25rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: #859397; margin-bottom: 0.5rem;">
-            <span>ENCLAVE STATUS</span>
-            <span style="display: flex; align-items: center; gap: 0.3rem; color: #68f5b8; font-weight: 700;">
-                <span style="width: 7px; height: 7px; border-radius: 50%; background: #68f5b8; box-shadow: 0 0 6px #68f5b8; display: inline-block;"></span> SECURE
-            </span>
-        </div>
-        <div style="font-size: 0.7rem; color: #bbc9cd; margin-bottom: 0.25rem; display: flex; justify-content: space-between;">
-            <span>BYZANTINE FILTER</span>
-            <span style="color: #8aebff;">0.003% DRIFT</span>
-        </div>
-        <div style="width: 100%; height: 4px; background: #313540; border-radius: 9999px; overflow: hidden; margin-bottom: 0.6rem;">
-            <div style="width: 98%; height: 100%; background: #22d3ee;"></div>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 0.7rem; color: #859397;">
-            <span>NODE CLUSTER 0x9F</span>
-            <span style="color: #68f5b8; font-weight: 600;">ACTIVE</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if st.button("Sign Out", use_container_width=True):
-        st.session_state.auth_user = None
-        st.rerun()
-
-
-
 # ---------------------------------------------------------------------------
 # LOAD PERSISTENT RESULTS DATA
 # ---------------------------------------------------------------------------
 @st.cache_data
+def _load_json_cached(path: Path, mtime: float):
+    """Parse a JSON file; *mtime* is part of the cache key so edits invalidate it."""
+    with open(path) as f:
+        return json.load(f)
+
+
 def load_json(path: Path):
     """Safely load and parse a JSON file from disk.
 
@@ -986,12 +816,119 @@ def load_json(path: Path):
     """
     if not path.exists():
         return None
-    with open(path) as f:
-        return json.load(f)
+    return _load_json_cached(path, path.stat().st_mtime)
+
+
+def md_html(html: str):
+    """Render an HTML snippet via st.markdown without Markdown mangling it.
+
+    Markdown ends an HTML block at a blank line and turns 4+ space indents
+    into code blocks, so dedent and drop blank lines first.
+    """
+    cleaned = " ".join(ln.strip() for ln in html.splitlines() if ln.strip())
+    st.markdown(cleaned, unsafe_allow_html=True)
 
 
 baseline = load_json(RESULTS_DIR / "baseline_results.json")
 comparison = load_json(RESULTS_DIR / "comparison.json")
+
+
+def summarize_defense(comparison: dict | None) -> dict:
+    """Derive real sidebar/header status values from the saved experiment results.
+
+    :param comparison: Parsed ``comparison.json`` or None.
+    :returns: Dict with ``n_nodes``, ``attacker`` (node id or None),
+        ``attacker_trust``/``honest_trust`` (final-round means) and ``acc_gain``.
+    """
+    out = {"n_nodes": None, "attacker": None, "attacker_trust": None, "honest_trust": None, "acc_gain": None}
+    if not comparison:
+        return out
+    run = comparison.get("trust_under_attack") or comparison.get("clean_trust")
+    if run:
+        out["n_nodes"] = run.get("n_nodes")
+        pn = run.get("poison_node")
+        out["attacker"] = None if pn is None else str(pn)
+        log = run.get("trust_log") or []
+        if log:
+            last = max(e["round"] for e in log)
+            final = {e["node_id"]: e["trust"] for e in log if e["round"] == last}
+            if out["attacker"] in final:
+                out["attacker_trust"] = final[out["attacker"]]
+            honest = [v for k, v in final.items() if k != out["attacker"]]
+            if honest:
+                out["honest_trust"] = sum(honest) / len(honest)
+    try:
+        out["acc_gain"] = (comparison["trust_under_attack"]["final_metrics"]["accuracy"]
+                           - comparison["fedavg_under_attack"]["final_metrics"]["accuracy"])
+    except KeyError:
+        pass
+    return out
+
+
+defense = summarize_defense(comparison)
+_nodes_label = f"{defense['n_nodes']} Nodes" if defense["n_nodes"] else "Nodes: n/a"
+
+_tested_ratio = f"1 of {defense['n_nodes']}" if defense["n_nodes"] else "n/a"
+_fa_txt = _ta_txt = "run the suite"
+if comparison:
+    try:
+        _fc = comparison["clean_fedavg"]["final_metrics"]["accuracy"]
+        _fa = comparison["fedavg_under_attack"]["final_metrics"]["accuracy"]
+        _ta = comparison["trust_under_attack"]["final_metrics"]["accuracy"]
+        _fa_txt = f"{_fa:.1%} ({_fa - _fc:+.1%})"
+        _ta_txt = f"{_ta:.1%} ({_ta - _fc:+.1%})"
+    except KeyError:
+        pass
+
+# Slim header
+st.markdown(f"""
+<div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; padding:0.2rem 0 0.9rem 0;">
+  <div style="display:flex; align-items:center; gap:0.8rem;">
+    <div style="width:40px; height:40px; display:flex; align-items:center; justify-content:center; background:rgba(34,211,238,0.08); border:1px solid rgba(34,211,238,0.35); border-radius:10px;">
+      <svg width="26" height="26" viewBox="0 0 100 100" fill="none"><path d="M50 8 L86 24 V52 C86 73 50 93 50 93 C50 93 14 73 14 52 V24 L50 8 Z" stroke="#22D3EE" stroke-width="5" fill="rgba(15,23,42,0.85)"/><circle cx="50" cy="48" r="9" fill="#68F5B8"/></svg>
+    </div>
+    <div>
+      <div style="font-size:1.6rem; font-weight:800; letter-spacing:-0.03em; color:#FFF; line-height:1.1;">Trust<span style="color:#22D3EE;">FL</span>
+        <span style="font-size:0.8rem; font-weight:600; color:{COLOR_MUTED}; margin-left:0.5rem; font-family:'JetBrains Mono',monospace;">// SECURITY CONSOLE</span></div>
+      <div style="font-size:0.8rem; color:#94A3B8;">Trust-weighted federated learning for IoT intrusion detection</div>
+    </div>
+  </div>
+  <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+    <span class="tf-badge badge-trust"><span class="tf-badge-dot"></span> {_nodes_label}</span>
+    <span class="tf-badge" style="background:rgba(34,211,238,0.12); color:#8aebff; border:1px solid rgba(34,211,238,0.25);">Trust floor 0.05</span>
+    <span class="tf-badge" style="background:rgba(104,245,184,0.10); color:#68f5b8; border:1px solid rgba(104,245,184,0.22);">Cosine + EMA</span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+with st.sidebar:
+    if SHIELD_IMG.exists():
+        st.image(str(SHIELD_IMG), use_container_width=True)
+    st.markdown(f"""
+    <div style="padding: 0.5rem 0 1rem 0; border-bottom: 1px solid {COLOR_BORDER}; margin-bottom: 1rem;">
+        <div style="font-size: 0.76rem; color: {COLOR_MUTED}; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Logged In As</div>
+        <div style="font-size: 1.05rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">{html.escape(user['name'])}</div>
+        <div style="font-size: 0.8rem; color: {COLOR_MUTED};">{html.escape(user['email'])}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if defense["honest_trust"] is not None:
+        atk = defense["attacker_trust"]
+        atk_txt = f"{atk:.2f}" if atk is not None else "n/a"
+        gain_txt = f"+{defense['acc_gain']:.1%}" if defense["acc_gain"] is not None else "n/a"
+        st.markdown(f"""
+        <div style="padding: 0.8rem; border-radius: 10px; background: rgba(23, 27, 38, 0.75); border: 1px solid rgba(255,255,255,0.07); font-family: 'JetBrains Mono', monospace; margin-bottom: 1.25rem; font-size: 0.72rem; color: #bbc9cd; line-height: 2;">
+            <div style="color:#859397;">LATEST EXPERIMENT</div>
+            <div style="display:flex; justify-content:space-between;"><span>Honest trust</span><span style="color:#68f5b8;">{defense['honest_trust']:.2f}</span></div>
+            <div style="display:flex; justify-content:space-between;"><span>Attacker trust</span><span style="color:#FFB4AB;">{atk_txt}</span></div>
+            <div style="display:flex; justify-content:space-between;"><span>Acc. vs FedAvg</span><span style="color:#8aebff;">{gain_txt}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.caption("No experiment results yet. Run `python src/run_experiment.py --suite`.")
+
+    if st.button("Sign Out", use_container_width=True):
+        st.session_state.auth_user = None
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -1006,43 +943,32 @@ tab_device, tab_live, tab_metrics, tab_about = st.tabs([
 
 
 # ===========================================================================
-ALIAS_MAP = {
-    "flow_duration": "duration", "dur": "duration", "time": "duration",
-    "tot_fwd_pkts": "src_pkts", "fwd_pkts": "src_pkts", "packets_sent": "src_pkts", "src_packets": "src_pkts",
-    "tot_bwd_pkts": "dst_pkts", "bwd_pkts": "dst_pkts", "packets_rcvd": "dst_pkts", "dst_packets": "dst_pkts",
-    "totlen_fwd_pkts": "src_bytes", "bytes_sent": "src_bytes", "source_bytes": "src_bytes",
-    "totlen_bwd_pkts": "dst_bytes", "bytes_rcvd": "dst_bytes", "dest_bytes": "dst_bytes",
-    "protocol": "proto_enc", "proto": "proto_enc",
-    "service": "service_enc",
-    "class": "label", "target": "label", "attack": "label", "is_attack": "label",
-}
-
 PRESET_SCENARIOS = {
     "trusted": {
         "title": "🟢 Clean IoT Edge Node (Trusted)",
         "file": "sample_device_trusted.csv",
-        "badge": "Trusted (~0.69)",
+        "badge": "Expected: Trusted",
         "color": COLOR_SUCCESS,
         "desc": "Healthy IoT sensor telemetry exhibiting normal traffic flow and strong gradient consensus alignment.",
     },
     "recon": {
         "title": "🟡 Stealth Recon & Port Scan (Suspicious)",
         "file": "sample_device_recon_probe.csv",
-        "badge": "Suspicious (~0.26)",
+        "badge": "Expected: Suspicious",
         "color": COLOR_WARN,
         "desc": "Low-and-slow network reconnaissance with anomalous connection sweeps and subtle label divergence.",
     },
     "ddos": {
         "title": "🟠 Volumetric DDoS Surge (Heavy Threat)",
         "file": "sample_device_ddos_surge.csv",
-        "badge": "Threat Surge",
+        "badge": "Expected: Suspicious",
         "color": COLOR_WARN,
         "desc": "Severe denial-of-service volumetric packet burst with 53%+ attack proportion.",
     },
     "adversary": {
         "title": "🔴 Byzantine Model Poisoning (Adversary)",
         "file": "sample_device_adversary.csv",
-        "badge": "Adversary (0.00)",
+        "badge": "Expected: Adversary",
         "color": COLOR_DANGER,
         "desc": "Coordinated label-inversion poisoning attack designed to corrupt the global federated model.",
     },
@@ -1075,170 +1001,6 @@ PRESET_SCENARIOS = {
         "desc": "Standard project benchmark poisoned node slice.",
     },
 }
-
-
-def normalize_and_align_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    """Align arbitrary user CSV columns to the required model feature schema.
-
-    Performs case-insensitive column resolution, maps common network flow aliases
-    (e.g., tot_fwd_pkts -> src_pkts), and imputes any remaining missing feature
-    columns using standard baseline medians so arbitrary CSVs can be scored.
-
-    :param df: Input DataFrame with arbitrary user columns.
-    :returns: Tuple of (aligned DataFrame with all FEATURE_COLUMNS, list of imputed column names).
-    """
-    aligned = df.copy()
-    col_map = {}
-    for col in aligned.columns:
-        norm = str(col).strip().lower().replace(" ", "_").replace("-", "_")
-        if norm in ALIAS_MAP:
-            col_map[col] = ALIAS_MAP[norm]
-        elif norm in [f.lower() for f in FEATURE_COLUMNS]:
-            for f in FEATURE_COLUMNS:
-                if f.lower() == norm:
-                    col_map[col] = f
-        elif norm == LABEL_COLUMN.lower():
-            col_map[col] = LABEL_COLUMN
-
-    if col_map:
-        aligned = aligned.rename(columns=col_map)
-
-    imputed_cols = []
-    for c in FEATURE_COLUMNS:
-        if c not in aligned.columns:
-            aligned[c] = 0.0
-            imputed_cols.append(c)
-
-    if LABEL_COLUMN in aligned.columns:
-        if aligned[LABEL_COLUMN].dtype == object:
-            aligned[LABEL_COLUMN] = aligned[LABEL_COLUMN].astype(str).str.lower().map(
-                lambda v: 0 if v in ["0", "0.0", "normal", "benign", "safe", "false", "clean"] else 1
-            )
-
-    return aligned, imputed_cols
-
-
-def trace_file_bugs_and_anomalies(df: pd.DataFrame, imputed_cols: list[str]) -> dict:
-    """Audit an uploaded traffic dataset for schema issues, data corruption, and security threats.
-
-    Identifies malformed values (NaNs, negative durations, integer underflows),
-    flags duplicated network flows and extreme packet spikes, detects volumetric
-    attack surges, and provides a sanitized copy ready for neural scoring.
-    Returns a dict with keys ``'findings'`` (list of dicts), ``'health_score'`` (int),
-    and ``'sanitized_df'`` (cleaned DataFrame).
-    """
-    findings = []
-    sanitized_df = df.copy()
-    total_rows = len(df)
-
-    if imputed_cols:
-        findings.append({
-            "category": "Schema Adjustment",
-            "severity": "Info",
-            "bug": f"Missing Features Imputed ({len(imputed_cols)})",
-            "details": f"Columns missing from CSV: {', '.join(imputed_cols)}. Automatically filled with baseline neutral medians.",
-            "action": "Zero/median imputed",
-        })
-
-    dup_count = int(df.duplicated().sum())
-    if dup_count > 0:
-        findings.append({
-            "category": "Data Integrity",
-            "severity": "Warning",
-            "bug": "Duplicate Network Flows",
-            "details": f"{dup_count} duplicated row(s) detected ({dup_count / total_rows:.1%}). Indicates retransmitted packets or buffer flush loops.",
-            "action": "Deduplicated for classification",
-        })
-        sanitized_df = sanitized_df.drop_duplicates().reset_index(drop=True)
-
-    null_counts = df.isnull().sum()
-    cols_with_null = null_counts[null_counts > 0]
-    if not cols_with_null.empty:
-        total_null_cells = int(cols_with_null.sum())
-        cols_summary = ", ".join([f"{c} ({n})" for c, n in cols_with_null.items()])
-        findings.append({
-            "category": "Data Integrity",
-            "severity": "Critical" if total_null_cells > 50 else "Warning",
-            "bug": "Missing / NaN Sensor Values",
-            "details": f"{total_null_cells} missing cell(s) across: {cols_summary}. Caused by dropped sensor readings or incomplete logging.",
-            "action": "Imputed with column medians",
-        })
-        for c in sanitized_df.select_dtypes(include=[np.number]).columns:
-            median_val = sanitized_df[c].median()
-            sanitized_df[c] = sanitized_df[c].fillna(median_val if not pd.isna(median_val) else 0.0)
-
-    if "duration" in df.columns:
-        neg_dur = int((df["duration"] < 0).sum())
-        if neg_dur > 0:
-            min_val = float(df["duration"].min())
-            findings.append({
-                "category": "Sensor Hardware Bug",
-                "severity": "Critical",
-                "bug": "Clock Skew / Negative Duration",
-                "details": f"{neg_dur} packet flow(s) have negative duration (min: {min_val:.3f}s). Indicates RTC desynchronization or NTP clock jump.",
-                "action": "Clipped negative durations to 0.0s",
-            })
-            sanitized_df["duration"] = sanitized_df["duration"].clip(lower=0.0)
-
-    byte_pkt_cols = [c for c in ["src_bytes", "dst_bytes", "src_pkts", "dst_pkts", "src_ip_bytes", "dst_ip_bytes"] if c in df.columns]
-    neg_counters = {}
-    for c in byte_pkt_cols:
-        neg_c = int((df[c] < 0).sum())
-        if neg_c > 0:
-            neg_counters[c] = neg_c
-    if neg_counters:
-        summary = ", ".join([f"{k}: {v}" for k, v in neg_counters.items()])
-        findings.append({
-            "category": "Sensor Hardware Bug",
-            "severity": "Critical",
-            "bug": "Integer Underflow / Negative Counter",
-            "details": f"Negative counters found in {summary}. Indicates signed integer overflow or telemetry firmware bug.",
-            "action": "Clipped negative values to 0",
-        })
-        for c in neg_counters:
-            sanitized_df[c] = sanitized_df[c].clip(lower=0)
-
-    if "src_pkts" in df.columns:
-        extreme_pkts = int((df["src_pkts"] > 1000000).sum())
-        if extreme_pkts > 0:
-            findings.append({
-                "category": "Threat / Buffer Bug",
-                "severity": "Critical",
-                "bug": "Extreme Packet Flood Spike",
-                "details": f"{extreme_pkts} flow(s) exceed 1,000,000 packets per burst. Indicates volumetric flood or sensor buffer overflow.",
-                "action": "Flagged as high-severity threat",
-            })
-
-    if "attack_type" in df.columns:
-        dos_count = int(df["attack_type"].isin(["dos", "ddos"]).sum())
-        if dos_count > 0.4 * total_rows:
-            findings.append({
-                "category": "Security Threat",
-                "severity": "Critical",
-                "bug": "Volumetric Denial-of-Service Surge",
-                "details": f"{dos_count} flow(s) ({dos_count / total_rows:.1%}) match DoS/DDoS volumetric signatures.",
-                "action": "Mitigation: Rate limiting recommended",
-            })
-        scan_count = int((df["attack_type"] == "scanning").sum())
-        if scan_count > 0.15 * total_rows:
-            findings.append({
-                "category": "Security Threat",
-                "severity": "Warning",
-                "bug": "Reconnaissance Port Sweep",
-                "details": f"{scan_count} flow(s) ({scan_count / total_rows:.1%}) match network port scanning and service probing.",
-                "action": "Mitigation: Blacklist scan source IPs",
-            })
-
-    critical_count = sum(1 for f in findings if f["severity"] == "Critical")
-    warning_count = sum(1 for f in findings if f["severity"] == "Warning")
-    info_count = sum(1 for f in findings if f["severity"] == "Info")
-    health_score = max(100 - (critical_count * 25) - (warning_count * 10) - (info_count * 5), 5)
-
-    return {
-        "findings": findings,
-        "health_score": health_score,
-        "sanitized_df": sanitized_df,
-    }
 
 
 # ===========================================================================
@@ -1330,7 +1092,7 @@ with tab_device:
     target_name = ""
     if "custom_csv_df" in st.session_state and st.session_state.custom_csv_df is not None:
         target_df = st.session_state.custom_csv_df
-        target_name = f"Uploaded File: {st.session_state.get('custom_csv_name', 'custom.csv')}"
+        target_name = f"Uploaded File: {html.escape(str(st.session_state.get('custom_csv_name', 'custom.csv')))}"
     else:
         active_key = st.session_state.active_scenario_key
         active_path = DATA_DIR / PRESET_SCENARIOS[active_key]["file"]
@@ -1347,7 +1109,7 @@ with tab_device:
             # pyrefly: ignore [missing-import]
             import model_utils as mu
             # pyrefly: ignore [missing-import]
-            from common import FEATURE_COLUMNS, LABEL_COLUMN
+            from common import FEATURE_COLUMNS
 
             # 1. Normalize and Align schema
             aligned_df, imputed_cols = normalize_and_align_features(target_df)
@@ -1406,11 +1168,11 @@ with tab_device:
                         st.markdown(f"""
                         <div style="background: rgba(255,255,255,0.02); border-left: 3px solid {f_color}; padding: 0.6rem 0.9rem; margin-bottom: 0.5rem; border-radius: 4px;">
                             <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <b style="color:#FFF; font-size:0.9rem;">{f['bug']}</b>
+                                <b style="color:#FFF; font-size:0.9rem;">{html.escape(f['bug'])}</b>
                                 <span style="font-size:0.75rem; color:{f_color}; font-weight:700; background:rgba(255,255,255,0.05); padding:2px 8px; border-radius:10px;">{f['severity']} // {f['category']}</span>
                             </div>
-                            <div style="font-size:0.82rem; color:#CBD5E1; margin: 0.3rem 0;">{f['details']}</div>
-                            <div style="font-size:0.75rem; color:{COLOR_MUTED};"><b>Remediation:</b> {f['action']}</div>
+                            <div style="font-size:0.82rem; color:#CBD5E1; margin: 0.3rem 0;">{html.escape(f['details'])}</div>
+                            <div style="font-size:0.75rem; color:{COLOR_MUTED};"><b>Remediation:</b> {html.escape(f['action'])}</div>
                         </div>
                         """, unsafe_allow_html=True)
             else:
@@ -1426,36 +1188,9 @@ with tab_device:
             global_weights = [npz[k] for k in npz.files]
             reference_consensus = np.load(RESULTS_DIR / "reference_consensus.npy")
 
-            X = scaler.transform(sanitized_df[FEATURE_COLUMNS])
-
-            clf_model = mu.build_model()
-            init_X = X[: min(4, len(X))]
-            init_y = np.array([0, 1, 0, 1])[: len(init_X)]
-            mu.init_architecture(clf_model, init_X, init_y)
-            mu.set_weights(clf_model, global_weights)
-
-            preds = clf_model.predict(X)
-            probs = clf_model.predict_proba(X)
-            attack_rate = float(preds.mean())
-
-            trust_score = None
-            if LABEL_COLUMN in sanitized_df.columns:
-                y = sanitized_df[LABEL_COLUMN].fillna(0).values.astype(np.int64)
-                local_model = mu.build_model()
-                mu.init_architecture(local_model, init_X, init_y)
-                mu.set_weights(local_model, global_weights)
-                mu.local_train(local_model, X, y, epochs=2)
-                new_weights = mu.get_weights(local_model)
-
-                delta = mu.flatten_weights(new_weights) - mu.flatten_weights(global_weights)
-                delta_norm = np.linalg.norm(delta)
-                consensus_norm = np.linalg.norm(reference_consensus)
-
-                if delta_norm > 0 and consensus_norm > 0:
-                    cos_sim = float(np.dot(delta, reference_consensus) / (delta_norm * consensus_norm))
-                    trust_score = max(cos_sim, 0.0)
-                else:
-                    trust_score = 0.0
+            scored = score_device(sanitized_df, scaler, global_weights, reference_consensus)
+            preds, probs = scored["preds"], scored["probs"]
+            attack_rate, trust_score = scored["attack_rate"], scored["trust_score"]
 
             if trust_score is None:
                 verdict, badge_class, gauge_color = "LABELS MISSING", "badge-warn", COLOR_WARN
@@ -1573,11 +1308,11 @@ with tab_live:
             ⚡ Live Device Traffic Stream
         </div>
         <div class="tf-card-sub">
-            Simulates a real-time stream of incoming network traffic from a held-out test dataset.
+            Streams flows from the held-out test set through the <b>trained federated global model</b>.
             Inject an <b style="color:#F59E0B;">attack burst</b> to watch the model flag threats in real time.
         </div>
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.4rem;">
-            <span class="tf-badge badge-trust"><span class="tf-badge-dot"></span> RandomForest Classifier</span>
+            <span class="tf-badge badge-trust"><span class="tf-badge-dot"></span> Federated Global Model (MLP)</span>
             <span class="tf-badge badge-warn" ><span class="tf-badge-dot"></span> 2s Refresh Rate</span>
             <span class="tf-badge badge-alert"><span class="tf-badge-dot"></span> Attack Detection Active</span>
         </div>
@@ -1586,20 +1321,24 @@ with tab_live:
 
     try:
         # pyrefly: ignore [missing-import]
-        from common import FEATURE_COLUMNS, fit_scaler, get_global_test_split, to_xy
-        from sklearn.ensemble import RandomForestClassifier
+        from common import FEATURE_COLUMNS, get_global_test_split, to_xy
+        import joblib
+        import model_utils as mu
 
         @st.cache_resource
         def get_demo_model():
-            """Train and cache a fast demo RandomForest classifier for live traffic streaming.
+            """Load the federated global model trained by ``run_experiment.py --suite``.
 
-            :returns: Tuple of (classifier, fitted scaler, test DataFrame).
+            :returns: Tuple of (model, fitted scaler, test DataFrame).
             """
-            train_df, test_df = get_global_test_split()
-            scaler = fit_scaler(train_df)
-            X_train, y_train = to_xy(train_df, scaler)
-            clf = RandomForestClassifier(n_estimators=100, max_depth=12, class_weight="balanced", random_state=42, n_jobs=-1)
-            clf.fit(X_train, y_train)
+            _, test_df = get_global_test_split()
+            scaler = joblib.load(RESULTS_DIR / "scaler.joblib")
+            npz = np.load(RESULTS_DIR / "global_model_weights.npz")
+            weights = [npz[k] for k in npz.files]
+            clf = mu.build_model()
+            X0, _ = to_xy(test_df.head(8), scaler)
+            mu.init_architecture(clf, X0[:4], np.array([0, 1, 0, 1]))
+            mu.set_weights(clf, weights)
             return clf, scaler, test_df
 
         clf, scaler, test_df = get_demo_model()
@@ -1628,7 +1367,7 @@ with tab_live:
 
         with ctrl_col3:
             badge_html = '<span class="tf-badge badge-trust"><span class="tf-badge-dot"></span> Live Streaming</span>' if st.session_state.live_feed_running else '<span class="tf-badge" style="background:#1E293B;color:#94A3B8;">Paused</span>'
-            st.markdown(f'<div style="padding-top:0.4rem;">{badge_html} &nbsp;&nbsp; <span style="font-size:0.84rem; color:{COLOR_MUTED};">Total Flows: <b style="color:#FFF;">{len(st.session_state.live_feed_log)}</b></span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="padding-top:0.4rem;">{badge_html}</div>', unsafe_allow_html=True)
 
         @st.fragment(run_every=2 if st.session_state.live_feed_running else None)
         def render_live_feed():
@@ -1655,12 +1394,21 @@ with tab_live:
 
             if st.session_state.live_feed_log:
                 feed_df = pd.DataFrame(st.session_state.live_feed_log)
+                n_total = len(feed_df)
+                n_atk = int((feed_df["Status"] == "ATTACK").sum())
+                st.markdown(f"""<div class="tf-statrow">
+                <div class="tf-stat"><div class="k">Recent flows</div><div class="v">{n_total}</div></div>
+                <div class="tf-stat"><div class="k">Attacks blocked</div><div class="v" style="color:#FFB4AB;">{n_atk}</div></div>
+                <div class="tf-stat"><div class="k">Attack rate</div><div class="v">{n_atk / n_total:.0%}</div></div>
+                </div>""", unsafe_allow_html=True)
                 st.dataframe(feed_df, use_container_width=True, hide_index=True, height=400)
             else:
                 st.info("Click 'Start Live Feed' to begin streaming real-time network traffic.")
 
         render_live_feed()
 
+    except FileNotFoundError:
+        st.warning("Global model not found. Run `python src/run_experiment.py --suite` to train it.")
     except Exception as exc:
         st.error(f"Live feed error: {exc}")
 
@@ -1669,7 +1417,7 @@ with tab_live:
 # TAB 3: MODEL PERFORMANCE
 # ===========================================================================
 with tab_metrics:
-    st.markdown("""
+    st.markdown(f"""
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; flex-wrap: wrap; gap: 0.5rem;">
         <div style="display: flex; align-items: center; gap: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;">
             <span style="color: #22D3EE; text-transform: uppercase;">SPEC: ENCLAVE-DEFENSE-V4.2</span>
@@ -1679,7 +1427,7 @@ with tab_metrics:
             <span style="color: #ADC6FF; text-transform: uppercase;">BYZANTINE BENCHMARKS</span>
         </div>
         <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.70rem; color: #68F5B8; background: rgba(104,245,184,0.1); padding: 0.2rem 0.6rem; border-radius: 6px; border: 1px solid rgba(104,245,184,0.3);">
-            BYZANTINE TOLERANCE: 33.3%
+            TESTED: 1 ATTACKER IN {defense['n_nodes'] or '?'} NODES
         </span>
     </div>
     <div class="tf-card">
@@ -1698,7 +1446,11 @@ with tab_metrics:
     else:
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
         if baseline:
-            m_col1.metric("Centralized Baseline", f"{baseline['accuracy']:.1%}")
+            if "mlp" in baseline:
+                m_col1.metric("Centralized (same MLP)", f"{baseline['mlp']['accuracy']:.1%}",
+                              help=f"Random Forest reference: {baseline['accuracy']:.1%}")
+            else:
+                m_col1.metric("Centralized (Random Forest)", f"{baseline['accuracy']:.1%}")
 
         if comparison and "clean_fedavg" in comparison:
             m_col2.metric("FedAvg (Clean)", f"{comparison['clean_fedavg']['final_metrics']['accuracy']:.1%}")
@@ -1735,6 +1487,7 @@ with tab_metrics:
                     y=["Accuracy", "F1-Score"],
                     barmode="group",
                     color_discrete_sequence=[COLOR_PRIMARY, COLOR_SUCCESS],
+                    labels={"value": "Score", "variable": "Metric"},
                 )
                 fig_bar.update_layout(
                     height=300,
@@ -1755,7 +1508,7 @@ with tab_metrics:
 
                 if "accuracy" in round_metrics:
                     line_df = pd.DataFrame({
-                        "Round": list(range(1, len(round_metrics["accuracy"]) + 1)),
+                        "Round": list(range(0, len(round_metrics["accuracy"]))),  # 0 = untrained initial model
                         "Accuracy": round_metrics["accuracy"],
                     })
                     fig_line = px.line(line_df, x="Round", y="Accuracy", markers=True)
@@ -1781,13 +1534,18 @@ with tab_metrics:
             if trust_run:
                 st.write("")
                 st.markdown("<b>Per-Node Trust Scores Over Rounds (Adversary Down-Weighting)</b>", unsafe_allow_html=True)
-                trust_df = pd.DataFrame(comparison[trust_run]["trust_log"]).drop_duplicates(subset=["round", "node_id"], keep="last")
+                trust_df = pd.DataFrame(comparison[trust_run]["trust_log"])
+                if trust_df.duplicated(subset=["round", "node_id"]).any():
+                    st.warning("Results file has duplicate node entries (old run); re-run the suite for exact values.")
+                    trust_df = trust_df.drop_duplicates(subset=["round", "node_id"], keep="last")
+                if defense["attacker"] is not None and defense["attacker"] not in set(trust_df["node_id"]):
+                    st.warning("The attacker node is missing from the trust log; re-run the experiment suite.")
                 pivot = trust_df.pivot(index="round", columns="node_id", values="trust").reset_index()
 
                 fig_traj = go.Figure()
                 for col in pivot.columns:
                     if col != "round":
-                        is_adv = col == "0" and trust_run == "trust_under_attack"
+                        is_adv = defense["attacker"] is not None and col == defense["attacker"] and trust_run == "trust_under_attack"
                         fig_traj.add_trace(go.Scatter(
                             x=pivot["round"],
                             y=pivot[col],
@@ -1816,7 +1574,7 @@ with tab_metrics:
 # TAB 4: HOW IT WORKS
 # ===========================================================================
 with tab_about:
-    st.markdown("""
+    md_html("""
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.8rem; flex-wrap: wrap; gap: 0.5rem;">
         <div style="display: flex; align-items: center; gap: 0.5rem; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;">
             <span style="color: #22D3EE; text-transform: uppercase;">SPEC: ENCLAVE-DEFENSE-V4.2</span>
@@ -1827,48 +1585,48 @@ with tab_about:
             ZERO-TRUST CONSENSUS
         </span>
     </div>
-    """, unsafe_allow_html=True)
+    """)
 
     # 4 Key Invariants (Stitch HUD tiles)
     inv_col1, inv_col2, inv_col3, inv_col4 = st.columns(4)
     with inv_col1:
-        st.markdown(f"""
+        md_html(f"""
         <div class="tf-card" style="padding: 1rem; margin-bottom: 0.8rem;">
-            <div style="font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:#859397; text-transform:uppercase;">Byzantine Tolerance</div>
-            <div style="font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#68F5B8;">33.3%</div>
-            <div style="font-size:0.75rem; color:#BBC9CD;">Max poisoned swarm ratio</div>
+            <div style="font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:#859397; text-transform:uppercase;">Attackers Tested</div>
+            <div style="font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#68F5B8;">{_tested_ratio}</div>
+            <div style="font-size:0.75rem; color:#BBC9CD;">Poisoned nodes in experiment</div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     with inv_col2:
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="padding: 1rem; margin-bottom: 0.8rem;">
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:#859397; text-transform:uppercase;">Cosine Floor (τ)</div>
             <div style="font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#22D3EE;">0.05</div>
             <div style="font-size:0.75rem; color:#BBC9CD;">Adversary weight bound</div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     with inv_col3:
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="padding: 1rem; margin-bottom: 0.8rem;">
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:#859397; text-transform:uppercase;">EMA Factor (α)</div>
-            <div style="font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#ADC6FF;">0.15</div>
-            <div style="font-size:0.75rem; color:#BBC9CD;">Low-and-slow drift filter</div>
+            <div style="font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#ADC6FF;">0.50</div>
+            <div style="font-size:0.75rem; color:#BBC9CD;">Weight on the newest round</div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     with inv_col4:
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="padding: 1rem; margin-bottom: 0.8rem;">
-            <div style="font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:#859397; text-transform:uppercase;">Zero-Trust Leakage</div>
-            <div style="font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#68F5B8;">0.00%</div>
-            <div style="font-size:0.75rem; color:#BBC9CD;">Raw telemetry leaves edge</div>
+            <div style="font-family:'JetBrains Mono', monospace; font-size:0.7rem; color:#859397; text-transform:uppercase;">Raw Traffic Shared</div>
+            <div style="font-family:'JetBrains Mono', monospace; font-size:1.6rem; font-weight:700; color:#68F5B8;">None</div>
+            <div style="font-size:0.75rem; color:#BBC9CD;">Only model weights are sent</div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
     # Core Architecture & Topography
     col_about_text, col_about_img = st.columns([1.25, 1], gap="large")
 
     with col_about_text:
-        st.markdown(f"""
+        md_html(f"""
         <div class="tf-card">
             <div class="tf-card-title">
                 <span style="color:#22D3EE;">⬡</span> How Trust-Weighted Federated Learning Works
@@ -1889,12 +1647,12 @@ with tab_about:
 
             <h4 style="color:#DFE2F1; margin-top: 1rem; font-size: 0.95rem;">3. The Defense: Cosine-EMA Consensus & Excision</h4>
             <p style="font-size: 0.86rem; color: #BBC9CD; line-height: 1.6;">
-                TrustFL computes high-dimensional vector alignments against the swarm median vector:
+                TrustFL computes high-dimensional vector alignments against the consensus direction (mean of unit-normalized updates):
             </p>
             <ul style="font-size: 0.84rem; color: #BBC9CD; line-height: 1.7;">
-                <li><b>Directional Similarity:</b> Quantifies cosine angle between local updates and the median consensus vector.</li>
-                <li><b>Historical Memory:</b> Compounded over rounds via Exponential Moving Average (<code style="color:#22D3EE;">α = 0.15</code>).</li>
-                <li><b>Dynamic Excision:</b> Divergent or malicious updates are clamped to baseline floor (<code style="color:#22D3EE;">τ = 0.05</code>) or quarantined.</li>
+                <li><b>Directional Similarity:</b> Quantifies cosine angle between local updates and the consensus direction.</li>
+                <li><b>Historical Memory:</b> Compounded over rounds via Exponential Moving Average (<code style="color:#22D3EE;">α = 0.5</code>).</li>
+                <li><b>Dynamic Excision:</b> Divergent or malicious updates get their aggregation weight clamped to a floor (<code style="color:#22D3EE;">τ = 0.05</code>).</li>
             </ul>
         </div>
 
@@ -1907,42 +1665,42 @@ with tab_about:
                     <div style="font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:#FFB4AB; font-weight:700;">STANDARD FEDAVG</div>
                     <div style="font-family:'JetBrains Mono', monospace; font-size:0.75rem; color:#859397; margin: 0.3rem 0;">w_{{t+1}} = Σ (n_k/n · w_k)</div>
                     <div style="font-size:0.78rem; color:#BBC9CD;">Post-Attack Accuracy:</div>
-                    <div style="font-family:'JetBrains Mono', monospace; font-size:1.1rem; color:#FFB4AB; font-weight:700;">41.2% (-57.2%)</div>
+                    <div style="font-family:'JetBrains Mono', monospace; font-size:1.1rem; color:#FFB4AB; font-weight:700;">{_fa_txt}</div>
                 </div>
                 <div style="background: #171B26; padding: 0.8rem; border-radius: 8px; border: 1px solid rgba(104,245,184,0.25);">
                     <div style="font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:#68F5B8; font-weight:700;">TRUSTFL ENCLAVE</div>
-                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.75rem; color:#859397; margin: 0.3rem 0;">w_{{t+1}} = Σ (Trust_k · Δw_k)</div>
+                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.75rem; color:#859397; margin: 0.3rem 0;">w_{{t+1}} = Σ (Trust_k·n_k·w_k) / Σ (Trust_k·n_k)</div>
                     <div style="font-size:0.78rem; color:#BBC9CD;">Post-Attack Accuracy:</div>
-                    <div style="font-family:'JetBrains Mono', monospace; font-size:1.1rem; color:#68F5B8; font-weight:700;">97.8% (Preserved)</div>
+                    <div style="font-family:'JetBrains Mono', monospace; font-size:1.1rem; color:#68F5B8; font-weight:700;">{_ta_txt}</div>
                 </div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
     with col_about_img:
         if MESH_IMG.exists():
-            st.image(str(MESH_IMG), caption="Decentralized Edge IoT Mesh // Zero-Trust Cryptographic Shield Nodes", use_container_width=True)
+            st.image(str(MESH_IMG), caption="Decentralized Edge IoT Mesh // Federated Shield Nodes", use_container_width=True)
         elif SHIELD_IMG.exists():
-            st.image(str(SHIELD_IMG), caption="TrustFL Cryptographic Shield Enclave", use_container_width=True)
+            st.image(str(SHIELD_IMG), caption="TrustFL Shield", use_container_width=True)
 
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="margin-top: 1rem;">
             <div class="tf-card-title">Enclave Topography Specifications</div>
             <div style="font-size: 0.82rem; color: #BBC9CD; line-height: 1.8; font-family: 'JetBrains Mono', monospace;">
                 <div><span style="color:#859397;">CONSENSUS:</span> <span style="color:#22D3EE;">Cosine Directional EMA</span></div>
-                <div><span style="color:#859397;">ENCLAVE PROTO:</span> <span style="color:#68F5B8;">Zero-Knowledge Gradient Transmission</span></div>
+                <div><span style="color:#859397;">ENCLAVE PROTO:</span> <span style="color:#68F5B8;">Weight-Update Sharing (no raw traffic)</span></div>
                 <div><span style="color:#859397;">TOLERANCE:</span> <span style="color:#68F5B8;">Byzantine Label-Flipping & Amplification</span></div>
                 <div><span style="color:#859397;">TARGET:</span> <span style="color:#DFE2F1;">Industrial IoT & Decentralized Sensors</span></div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
     # 4-Stage Neutralization Pipeline
     st.write("")
     st.markdown("### 🛡️ 4-Stage Byzantine Neutralization Pipeline")
     pcol1, pcol2, pcol3, pcol4 = st.columns(4)
     with pcol1:
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="padding: 1rem; height: 100%;">
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#22D3EE; font-weight:700;">STAGE 01</div>
             <div style="font-weight:700; color:#DFE2F1; font-size:0.88rem; margin:0.3rem 0;">Decentralized Edge Telemetry</div>
@@ -1953,35 +1711,35 @@ with tab_about:
                 Δw_i = w_local - w_global
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     with pcol2:
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="padding: 1rem; height: 100%;">
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#ADC6FF; font-weight:700;">STAGE 02</div>
-            <div style="font-weight:700; color:#DFE2F1; font-size:0.88rem; margin:0.3rem 0;">Attested Gradient Passing</div>
+            <div style="font-weight:700; color:#DFE2F1; font-size:0.88rem; margin:0.3rem 0;">Weight-Update Passing</div>
             <div style="font-size:0.78rem; color:#BBC9CD; line-height:1.5;">
-                Only parameter deltas exit edge devices. Cryptographic signatures prevent tampering across the network.
+                Only model weights exit edge nodes. (Authentication/signing is out of scope for this simulation.)
             </div>
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:#ADC6FF; margin-top:0.6rem; background:#171B26; padding:0.25rem 0.5rem; border-radius:4px;">
-                mTLS + Gradient Hash
+                Simulated via Flower
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     with pcol3:
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="padding: 1rem; height: 100%;">
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#68F5B8; font-weight:700;">STAGE 03</div>
             <div style="font-weight:700; color:#DFE2F1; font-size:0.88rem; margin:0.3rem 0;">Cosine EMA Consensus</div>
             <div style="font-size:0.78rem; color:#BBC9CD; line-height:1.5;">
-                Server measures angular similarity against the swarm medoid vector to update node reputation.
+                Server measures angular similarity against the consensus direction to update node reputation.
             </div>
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:#68F5B8; margin-top:0.6rem; background:#171B26; padding:0.25rem 0.5rem; border-radius:4px;">
-                R_t = 0.15·s_t + 0.85·R_{{t-1}}
+                R_t = 0.5·s_t + 0.5·R_{t-1}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     with pcol4:
-        st.markdown(f"""
+        md_html("""
         <div class="tf-card" style="padding: 1rem; height: 100%;">
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.68rem; color:#FFB4AB; font-weight:700;">STAGE 04</div>
             <div style="font-weight:700; color:#DFE2F1; font-size:0.88rem; margin:0.3rem 0;">Dynamic Byzantine Excision</div>
@@ -1989,30 +1747,25 @@ with tab_about:
                 Poisoned gradients with low or negative cosine similarity are down-weighted to τ = 0.05.
             </div>
             <div style="font-family:'JetBrains Mono', monospace; font-size:0.72rem; color:#FFB4AB; margin-top:0.6rem; background:#171B26; padding:0.25rem 0.5rem; border-radius:4px;">
-                w_{{t+1}} = Σ (Trust_i · Δw_i)
+                w_{t+1} = Σ (Trust_i·n_i·w_i) / Σ (Trust_i·n_i)
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
     # Video Keynotes
     st.write("")
-    st.markdown("""
+    md_html("""
     <div class="tf-card">
         <div class="tf-card-title">
-            <span style="color:#22D3EE;">▶</span> Technical Research Briefings & Video Keynotes
+            <span style="color:#22D3EE;">▶</span> Further Reading
         </div>
         <div class="tf-card-sub">
-            Watch presentations on federated learning, decentralized architecture, and privacy-preserving AI.
+            Framework documentation and the original federated averaging paper.
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """)
 
-    vcol1, vcol2 = st.columns(2, gap="medium")
-    with vcol1:
-        st.video("https://www.youtube.com/watch?v=d_k8S-p0q8A")
-        st.caption("Flower: Unified Federated AI — Daniel J. Beutel (Co-creator)")
-    with vcol2:
-        st.video("https://www.youtube.com/watch?v=GB0Xq8e8n3U")
-        st.caption("Google I/O: Federated Learning on Decentralized Data")
-
-
+    st.markdown(
+        "- [Flower: federated learning framework docs](https://flower.ai/docs/)\n"
+        "- [FedAvg paper: Communication-Efficient Learning from Decentralized Data](https://arxiv.org/abs/1602.05629)"
+    )

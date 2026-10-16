@@ -13,10 +13,17 @@ from pathlib import Path
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score, f1_score
 
+import numpy as np
+
+import model_utils as mu
 from common import get_global_test_split, fit_scaler, to_xy, RANDOM_STATE
 
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
+
+# Same budget as the federated runs (8 rounds x 2 local epochs) so the MLP
+# baseline is a like-for-like "no federation" ceiling.
+MLP_EPOCHS = 16
 
 
 def main():
@@ -43,7 +50,18 @@ def main():
     print(f"Centralized baseline — accuracy: {acc:.4f}  F1: {f1:.4f}")
     print(classification_report(y_test, y_pred))
 
-    results = {"accuracy": acc, "f1": f1, "report": report}
+    # Like-for-like ceiling: the exact model class used by the federated runs.
+    mlp = mu.build_model(random_state=RANDOM_STATE)
+    mu.init_architecture(mlp, np.zeros((4, X_train.shape[1])), np.array([0, 1, 0, 1]))
+    mu.local_train(mlp, X_train, y_train, epochs=MLP_EPOCHS)
+    mlp_pred = mlp.predict(X_test)
+    mlp_acc, mlp_f1 = accuracy_score(y_test, mlp_pred), f1_score(y_test, mlp_pred)
+    print(f"Centralized MLP baseline  — accuracy: {mlp_acc:.4f}  F1: {mlp_f1:.4f}")
+
+    results = {
+        "accuracy": acc, "f1": f1, "report": report,
+        "mlp": {"accuracy": mlp_acc, "f1": mlp_f1, "epochs": MLP_EPOCHS},
+    }
     with open(RESULTS_DIR / "baseline_results.json", "w") as f:
         json.dump(results, f, indent=2)
     print(f"Saved results to {RESULTS_DIR / 'baseline_results.json'}")
