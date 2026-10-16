@@ -143,6 +143,13 @@ Dashboard demo login: `demo@trustfl.org` / `TrustFL@2026`
 
 macOS / Linux: the same commands work; activate with `source .venv/bin/activate`.
 
+> **Fresh clone on another machine?** The `.venv` folder is not in git, so run steps 1–2 first and
+> make sure the environment is **activated** before running anything. Seeing
+> `Exit Code: 701 … Extra dependencies required for simulation are missing` means Ray is not
+> installed in the Python you used — activate the venv and run `pip install -r requirements.txt`.
+> Python 3.12 is recommended. Flower prints two harmless warnings (`run_simulation is deprecated`,
+> `Ray support on Windows is experimental`); on Windows, WSL2 is Flower's preferred setup.
+
 The repository already contains generated results (`results/`) and the synthetic dataset
 (`data/raw/`), so steps 3 can be skipped if you only want to look at the dashboard.
 

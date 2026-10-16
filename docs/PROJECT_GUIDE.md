@@ -595,6 +595,8 @@ regenerated.
 
 | Symptom | Cause and fix |
 |---|---|
+| `ERROR: Exit Code: 701 … Extra dependencies required for simulation are missing` | Flower is installed but **Ray is not** in the Python you ran. Typical on a fresh clone (the `.venv` is not in git) or when `pip install flwr` was used without the extra. Create/activate a venv and run `pip install -r requirements.txt` (it contains `flwr[simulation]`), then check `python -c "import ray, flwr; print(ray.__version__, flwr.__version__)"`. Use Python 3.12; very new Python versions may lack Ray wheels |
+| Warnings `run_simulation is deprecated` and `Ray support on Windows is experimental` | Harmless. Flower prefers WSL2 for simulations on Windows, but the suite also runs natively (just slowly to start) |
 | `pip install` takes very long | `flwr[simulation]` installs Ray and many dependencies; wait for it |
 | First suite run seems stuck | Ray start-up on Windows is slow (it spawns many processes). A 2-round suite took ≈ 2 minutes. If nothing finishes after ~15 minutes, stop it, run `ray stop --force`, and retry |
 | Many stray `python` processes after a run | Leftover Ray workers: `ray stop --force` |
