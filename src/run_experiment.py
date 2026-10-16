@@ -24,9 +24,15 @@ Run the full comparison suite in one go and save results/comparison.json:
 import argparse
 import importlib.util
 import json
+import logging
+import os
 import platform
 import sys
 from pathlib import Path
+
+# Must be set before Ray starts so its worker processes inherit it. Silences a
+# Ray FutureWarning about accelerator environment variables (harmless here: CPU only).
+os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
 
 import numpy as np
 # pyrefly: ignore [missing-import]
@@ -53,6 +59,31 @@ from trust_strategy import TrustWeightedFedAvg
 
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
+
+
+# Set by --show-ray-logs. Leave False for clean output; turn on when debugging a failing run.
+_SETTINGS = {"show_ray_logs": False}
+
+_KNOWN_HARMLESS = (
+    "DEPRECATED FEATURE",                      # run_simulation deprecation notice
+    "Ray support on Windows is experimental",  # Flower's standing Windows notice
+    "No fit_metrics_aggregation_fn provided",  # we do not aggregate extra client metrics
+)
+
+
+class _DropKnownHarmless(logging.Filter):
+    """Drop only the specific, known-harmless Flower warnings; everything else still prints."""
+
+    def filter(self, record):
+        message = record.getMessage()
+        return not any(text in message for text in _KNOWN_HARMLESS)
+
+
+def _quiet_known_warnings():
+    """Hide the repetitive harmless Flower warnings (errors and INFO progress are untouched)."""
+    flower_logger = logging.getLogger("flwr")
+    if not any(isinstance(f, _DropKnownHarmless) for f in flower_logger.filters):
+        flower_logger.addFilter(_DropKnownHarmless())
 
 
 def _require_ray():
@@ -282,13 +313,18 @@ def run_once(strategy_name, partition_type, n_nodes, n_rounds, local_epochs,
 
     server_app = ServerApp(server_fn=server_fn)
 
+    backend_config = {"client_resources": {"num_cpus": 1, "num_gpus": 0}}
+    if not _SETTINGS["show_ray_logs"]:
+        # Do not forward Ray worker stderr to the console: on Windows it contains
+        # harmless "access violation" stack dumps printed while workers shut down.
+        backend_config["init_args"] = {"log_to_driver": False}
+        _quiet_known_warnings()
+
     run_simulation(
         server_app=server_app,
         client_app=client_app,
         num_supernodes=n_nodes,
-        backend_config={
-            "client_resources": {"num_cpus": 1, "num_gpus": 0},
-        },
+        backend_config=backend_config,
     )
 
     final = {k: v[-1] for k, v in rounds_metrics.items() if v}
@@ -420,7 +456,11 @@ def main():
     p.add_argument("--poison-fraction", type=float, default=1.0)
     p.add_argument("--boost-factor", type=float, default=4.0, help="update-scaling factor for the poisoned node")
     p.add_argument("--suite", action="store_true", help="run the full Phase 5 comparison suite")
+    p.add_argument("--show-ray-logs", action="store_true",
+                   help="show Ray worker output and Flower's harmless warnings (use when debugging)")
     args = p.parse_args()
+
+    _SETTINGS["show_ray_logs"] = args.show_ray_logs
 
     if args.suite:
         run_suite(n_nodes=args.n_nodes, n_rounds=args.rounds, local_epochs=args.local_epochs,

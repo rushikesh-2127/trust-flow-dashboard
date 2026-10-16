@@ -337,6 +337,7 @@ The orchestrator. Everything you run goes through here.
 | `--poison-fraction F` | 1.0 | Fraction of that node's labels to flip |
 | `--boost-factor B` | 4.0 | Update multiplier for the attacker |
 | `--suite` | off | Run all four standard configurations and save `comparison.json` |
+| `--show-ray-logs` | off | Show Ray worker output and Flower's harmless warnings. By default these are hidden (see below); turn it on when debugging a failing run |
 
 Note: `--boost-factor` only matters for the node chosen with `--poison-node`.
 
@@ -596,7 +597,7 @@ regenerated.
 | Symptom | Cause and fix |
 |---|---|
 | `ERROR: Exit Code: 701 … Extra dependencies required for simulation are missing` | Flower is installed but **Ray is not**. Known cause: Flower 1.40's `simulation` extra installs Ray only on **Python 3.11–3.12**, or on 3.13–3.14 **outside Windows**. On **Windows with Python 3.13/3.14**, `pip install "flwr[simulation]"` succeeds but silently skips Ray. Fix: install **Python 3.12** and build the environment with it (`py -3.12 -m venv .venv`, activate, `pip install -r requirements.txt`). Check with `python -c "import ray, flwr; print(ray.__version__, flwr.__version__)"`. It also happens when the venv is not activated (a fresh clone has no `.venv`). `run_experiment.py` now detects a missing Ray and prints this advice |
-| Warnings `run_simulation is deprecated` and `Ray support on Windows is experimental` | Harmless. Flower prefers WSL2 for simulations on Windows, but the suite also runs natively (just slowly to start) |
+| Warnings `run_simulation is deprecated`, `Ray support on Windows is experimental`, and `(raylet) … Windows fatal exception: access violation` stack dumps | All harmless and **hidden by default** (Flower's deprecation/Windows notices are filtered, Ray worker output is not forwarded). The access-violation dumps are Ray workers shutting down on Windows after the work is done. Run with `--show-ray-logs` to see everything, e.g. when a run actually fails |
 | `pip install` takes very long | `flwr[simulation]` installs Ray and many dependencies; wait for it |
 | First suite run seems stuck | Ray start-up on Windows is slow (it spawns many processes). A 2-round suite took ≈ 2 minutes. If nothing finishes after ~15 minutes, stop it, run `ray stop --force`, and retry |
 | Many stray `python` processes after a run | Leftover Ray workers: `ray stop --force` |
