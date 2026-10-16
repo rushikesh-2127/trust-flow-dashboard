@@ -1,3 +1,8 @@
+> **Status note:** this is the original two-person work split, kept for project history. The phases
+> described here are complete. For current setup, workflow and interface rules see
+> [CONTRIBUTING.md](CONTRIBUTING.md); for the full project explanation see
+> [docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md).
+
 # Team Workflow — Trust-Weighted FL for IoT IDS
 
 ## Work division
